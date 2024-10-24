@@ -36,15 +36,14 @@ class Database:
 
     def ensure_connection(self):
         try:
-            # Try to execute a simple query to test the connection
             with self.conn.cursor() as cur:
                 cur.execute("SELECT 1")
         except (psycopg2.OperationalError, psycopg2.InterfaceError):
-            # If the connection is dead, reconnect
             self.connect()
 
     def create_tables(self):
         with self.conn.cursor() as cur:
+            # Create decks table
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS decks (
                     id SERIAL PRIMARY KEY,
@@ -56,6 +55,19 @@ class Database:
                     purchase_price DECIMAL(10,2),
                     notes TEXT,
                     image_data BYTEA,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Create wishlist table
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS wishlist (
+                    id SERIAL PRIMARY KEY,
+                    deck_name VARCHAR(255) NOT NULL,
+                    manufacturer VARCHAR(255) NOT NULL,
+                    expected_price DECIMAL(10,2),
+                    priority INTEGER CHECK (priority BETWEEN 1 AND 5),
+                    notes TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
@@ -82,6 +94,36 @@ class Database:
                 self.conn.rollback()
                 raise Exception(f"Database error: {str(e)}")
 
+    def add_to_wishlist(self, wishlist_data):
+        self.ensure_connection()
+        with self.conn.cursor() as cur:
+            try:
+                cur.execute("""
+                    INSERT INTO wishlist (deck_name, manufacturer, expected_price, priority, notes)
+                    VALUES (%s, %s, %s, %s, %s)
+                    RETURNING id
+                """, (
+                    wishlist_data['deck_name'], wishlist_data['manufacturer'],
+                    wishlist_data['expected_price'], wishlist_data['priority'],
+                    wishlist_data['notes']
+                ))
+                self.conn.commit()
+                return cur.fetchone()[0]
+            except Exception as e:
+                self.conn.rollback()
+                raise Exception(f"Database error: {str(e)}")
+
+    def remove_from_wishlist(self, wishlist_id):
+        self.ensure_connection()
+        with self.conn.cursor() as cur:
+            try:
+                cur.execute("DELETE FROM wishlist WHERE id = %s", (wishlist_id,))
+                self.conn.commit()
+                return True
+            except Exception as e:
+                self.conn.rollback()
+                raise Exception(f"Failed to remove from wishlist: {str(e)}")
+
     def get_all_decks(self):
         self.ensure_connection()
         try:
@@ -91,6 +133,16 @@ class Database:
             """, self.conn)
         except Exception as e:
             raise Exception(f"Failed to fetch decks: {str(e)}")
+
+    def get_wishlist(self):
+        self.ensure_connection()
+        try:
+            return pd.read_sql("""
+                SELECT * FROM wishlist
+                ORDER BY priority DESC, created_at DESC
+            """, self.conn)
+        except Exception as e:
+            raise Exception(f"Failed to fetch wishlist: {str(e)}")
 
     def get_deck_image(self, deck_id):
         self.ensure_connection()
