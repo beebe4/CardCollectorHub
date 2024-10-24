@@ -3,6 +3,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import pandas as pd
 import time
+from datetime import datetime
 
 class Database:
     def __init__(self):
@@ -10,6 +11,7 @@ class Database:
         self.retry_delay = 1  # seconds
         self.conn = None
         self.connect()
+        self.init_migrations()
         
     def connect(self):
         retry_count = 0
@@ -24,7 +26,6 @@ class Database:
                     host=os.environ['PGHOST'],
                     port=os.environ['PGPORT']
                 )
-                self.create_tables()
                 return
             except Exception as e:
                 last_error = str(e)
@@ -34,58 +35,141 @@ class Database:
                     
         raise Exception(f"Failed to connect to database after {self.max_retries} attempts. Last error: {last_error}")
 
+    def init_migrations(self):
+        """Initialize migrations table and system"""
+        with self.conn.cursor() as cur:
+            # Create migrations table if it doesn't exist
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    version INTEGER PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
+                    applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    status VARCHAR(50) DEFAULT 'pending',
+                    rollback_sql TEXT
+                )
+            """)
+            self.conn.commit()
+            
+            # Check current version
+            cur.execute("SELECT MAX(version) FROM schema_migrations WHERE status = 'completed'")
+            current_version = cur.fetchone()[0] or 0
+            
+            # Define migrations
+            migrations = [
+                {
+                    'version': 1,
+                    'name': 'initial_schema',
+                    'up': """
+                        CREATE TABLE IF NOT EXISTS decks (
+                            id SERIAL PRIMARY KEY,
+                            deck_name VARCHAR(255) NOT NULL,
+                            manufacturer VARCHAR(255) NOT NULL,
+                            release_year INTEGER,
+                            condition VARCHAR(50),
+                            purchase_date DATE,
+                            purchase_price DECIMAL(10,2),
+                            notes TEXT,
+                            image_data BYTEA,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """,
+                    'down': "DROP TABLE IF EXISTS decks"
+                },
+                {
+                    'version': 2,
+                    'name': 'add_wishlist',
+                    'up': """
+                        CREATE TABLE IF NOT EXISTS wishlist (
+                            id SERIAL PRIMARY KEY,
+                            deck_name VARCHAR(255) NOT NULL,
+                            manufacturer VARCHAR(255) NOT NULL,
+                            expected_price DECIMAL(10,2),
+                            priority INTEGER CHECK (priority BETWEEN 1 AND 5),
+                            notes TEXT,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """,
+                    'down': "DROP TABLE IF EXISTS wishlist"
+                },
+                {
+                    'version': 3,
+                    'name': 'add_market_values',
+                    'up': """
+                        CREATE TABLE IF NOT EXISTS market_values (
+                            id SERIAL PRIMARY KEY,
+                            deck_id INTEGER REFERENCES decks(id),
+                            market_price DECIMAL(10,2) NOT NULL,
+                            source VARCHAR(255),
+                            condition VARCHAR(50),
+                            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            notes TEXT,
+                            UNIQUE(deck_id, source)
+                        )
+                    """,
+                    'down': "DROP TABLE IF EXISTS market_values"
+                }
+            ]
+            
+            # Apply pending migrations
+            for migration in migrations:
+                if migration['version'] > current_version:
+                    try:
+                        # Start migration
+                        cur.execute(
+                            "INSERT INTO schema_migrations (version, name, status, rollback_sql) VALUES (%s, %s, %s, %s)",
+                            (migration['version'], migration['name'], 'pending', migration['down'])
+                        )
+                        
+                        # Apply migration
+                        cur.execute(migration['up'])
+                        
+                        # Mark as completed
+                        cur.execute(
+                            "UPDATE schema_migrations SET status = 'completed', applied_at = %s WHERE version = %s",
+                            (datetime.now(), migration['version'])
+                        )
+                        
+                        self.conn.commit()
+                    except Exception as e:
+                        self.conn.rollback()
+                        # Mark as failed
+                        cur.execute(
+                            "UPDATE schema_migrations SET status = 'failed' WHERE version = %s",
+                            (migration['version'],)
+                        )
+                        self.conn.commit()
+                        raise Exception(f"Migration {migration['version']} failed: {str(e)}")
+
+    def rollback_migration(self, version):
+        """Rollback a specific migration version"""
+        with self.conn.cursor() as cur:
+            try:
+                # Get rollback SQL
+                cur.execute("SELECT rollback_sql FROM schema_migrations WHERE version = %s", (version,))
+                result = cur.fetchone()
+                if not result:
+                    raise Exception(f"Migration version {version} not found")
+                
+                rollback_sql = result[0]
+                
+                # Execute rollback
+                cur.execute(rollback_sql)
+                
+                # Remove migration record
+                cur.execute("DELETE FROM schema_migrations WHERE version = %s", (version,))
+                
+                self.conn.commit()
+            except Exception as e:
+                self.conn.rollback()
+                raise Exception(f"Rollback failed for version {version}: {str(e)}")
+
     def ensure_connection(self):
         try:
             with self.conn.cursor() as cur:
                 cur.execute("SELECT 1")
         except (psycopg2.OperationalError, psycopg2.InterfaceError):
             self.connect()
-
-    def create_tables(self):
-        with self.conn.cursor() as cur:
-            # Create decks table
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS decks (
-                    id SERIAL PRIMARY KEY,
-                    deck_name VARCHAR(255) NOT NULL,
-                    manufacturer VARCHAR(255) NOT NULL,
-                    release_year INTEGER,
-                    condition VARCHAR(50),
-                    purchase_date DATE,
-                    purchase_price DECIMAL(10,2),
-                    notes TEXT,
-                    image_data BYTEA,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Create wishlist table
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS wishlist (
-                    id SERIAL PRIMARY KEY,
-                    deck_name VARCHAR(255) NOT NULL,
-                    manufacturer VARCHAR(255) NOT NULL,
-                    expected_price DECIMAL(10,2),
-                    priority INTEGER CHECK (priority BETWEEN 1 AND 5),
-                    notes TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-
-            # Create market values table
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS market_values (
-                    id SERIAL PRIMARY KEY,
-                    deck_id INTEGER REFERENCES decks(id),
-                    market_price DECIMAL(10,2) NOT NULL,
-                    source VARCHAR(255),
-                    condition VARCHAR(50),
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    notes TEXT,
-                    UNIQUE(deck_id, source)
-                )
-            """)
-            self.conn.commit()
+            self.init_migrations()
 
     def add_deck(self, deck_data, image_data=None):
         self.ensure_connection()
@@ -226,5 +310,12 @@ class Database:
                 return cur.fetchall()
             except Exception as e:
                 raise Exception(f"Search failed: {str(e)}")
+
+    def get_current_schema_version(self):
+        """Get the current schema version"""
+        self.ensure_connection()
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT MAX(version) FROM schema_migrations WHERE status = 'completed'")
+            return cur.fetchone()[0] or 0
 
 db = Database()
