@@ -111,6 +111,16 @@ class Database:
                 },
                 {
                     'version': 4,
+                    'name': 'add_uuid_extension',
+                    'up': """
+                        CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+                    """,
+                    'down': """
+                        DROP EXTENSION IF EXISTS "uuid-ossp";
+                    """
+                },
+                {
+                    'version': 5,
                     'name': 'add_shared_collections',
                     'up': """
                         CREATE TABLE IF NOT EXISTS shared_collections (
@@ -123,13 +133,10 @@ class Database:
                             expires_at TIMESTAMP,
                             is_public BOOLEAN DEFAULT false,
                             UNIQUE(share_id)
-                        );
-                        
-                        CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+                        )
                     """,
                     'down': """
                         DROP TABLE IF EXISTS shared_collections;
-                        DROP EXTENSION IF EXISTS "uuid-ossp";
                     """
                 }
             ]
