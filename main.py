@@ -17,7 +17,7 @@ def main():
     st.title("🎴 Playing Card Collection Manager")
     
     # Check if viewing a shared collection
-    query_params = st.experimental_get_query_params()
+    query_params = st.query_params
     if 'share' in query_params:
         render_shared_collection(query_params['share'][0])
         return
