@@ -5,6 +5,7 @@ from components.statistics import render_statistics
 from components.search import render_search
 from components.wishlist import render_wishlist
 from components.market_tracker import render_market_tracker
+from components.share_collection import render_share_collection, render_shared_collection
 
 st.set_page_config(
     page_title="Playing Card Collection Manager",
@@ -15,12 +16,19 @@ st.set_page_config(
 def main():
     st.title("🎴 Playing Card Collection Manager")
     
+    # Check if viewing a shared collection
+    query_params = st.experimental_get_query_params()
+    if 'share' in query_params:
+        render_shared_collection(query_params['share'][0])
+        return
+    
     # Navigation
     pages = {
         "View Collection": render_view_collection,
         "Add New Deck": render_add_deck,
         "Market Tracker": render_market_tracker,
         "Wishlist": render_wishlist,
+        "Share Collection": render_share_collection,
         "Statistics": render_statistics,
         "Search": render_search
     }

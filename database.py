@@ -4,6 +4,7 @@ from psycopg2.extras import RealDictCursor
 import pandas as pd
 import time
 from datetime import datetime
+import uuid
 
 class Database:
     def __init__(self):
@@ -107,6 +108,29 @@ class Database:
                         )
                     """,
                     'down': "DROP TABLE IF EXISTS market_values"
+                },
+                {
+                    'version': 4,
+                    'name': 'add_shared_collections',
+                    'up': """
+                        CREATE TABLE IF NOT EXISTS shared_collections (
+                            id SERIAL PRIMARY KEY,
+                            share_id UUID DEFAULT uuid_generate_v4(),
+                            name VARCHAR(255) NOT NULL,
+                            description TEXT,
+                            deck_ids INTEGER[] NOT NULL,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            expires_at TIMESTAMP,
+                            is_public BOOLEAN DEFAULT false,
+                            UNIQUE(share_id)
+                        );
+                        
+                        CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+                    """,
+                    'down': """
+                        DROP TABLE IF EXISTS shared_collections;
+                        DROP EXTENSION IF EXISTS "uuid-ossp";
+                    """
                 }
             ]
             
@@ -317,5 +341,62 @@ class Database:
         with self.conn.cursor() as cur:
             cur.execute("SELECT MAX(version) FROM schema_migrations WHERE status = 'completed'")
             return cur.fetchone()[0] or 0
+
+    def create_shared_collection(self, name, deck_ids, description=None, expires_at=None, is_public=False):
+        self.ensure_connection()
+        with self.conn.cursor() as cur:
+            try:
+                cur.execute("""
+                    INSERT INTO shared_collections (name, description, deck_ids, expires_at, is_public)
+                    VALUES (%s, %s, %s, %s, %s)
+                    RETURNING share_id
+                """, (name, description, deck_ids, expires_at, is_public))
+                self.conn.commit()
+                return cur.fetchone()[0]
+            except Exception as e:
+                self.conn.rollback()
+                raise Exception(f"Failed to create shared collection: {str(e)}")
+
+    def get_shared_collection(self, share_id):
+        self.ensure_connection()
+        with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+            try:
+                # Get shared collection details
+                cur.execute("""
+                    SELECT * FROM shared_collections 
+                    WHERE share_id = %s AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
+                """, (share_id,))
+                collection = cur.fetchone()
+                
+                if not collection:
+                    return None
+                
+                # Get associated decks
+                deck_ids = collection['deck_ids']
+                if deck_ids:
+                    cur.execute("""
+                        SELECT id, deck_name, manufacturer, release_year, condition, 
+                               purchase_date, notes, created_at
+                        FROM decks 
+                        WHERE id = ANY(%s)
+                    """, (deck_ids,))
+                    collection['decks'] = cur.fetchall()
+                else:
+                    collection['decks'] = []
+                
+                return collection
+            except Exception as e:
+                raise Exception(f"Failed to fetch shared collection: {str(e)}")
+
+    def get_active_shared_collections(self):
+        self.ensure_connection()
+        try:
+            return pd.read_sql("""
+                SELECT * FROM shared_collections
+                WHERE expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP
+                ORDER BY created_at DESC
+            """, self.conn)
+        except Exception as e:
+            raise Exception(f"Failed to fetch shared collections: {str(e)}")
 
 db = Database()
