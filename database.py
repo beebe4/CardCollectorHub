@@ -71,6 +71,20 @@ class Database:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+
+            # Create market values table
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS market_values (
+                    id SERIAL PRIMARY KEY,
+                    deck_id INTEGER REFERENCES decks(id),
+                    market_price DECIMAL(10,2) NOT NULL,
+                    source VARCHAR(255),
+                    condition VARCHAR(50),
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    notes TEXT,
+                    UNIQUE(deck_id, source)
+                )
+            """)
             self.conn.commit()
 
     def add_deck(self, deck_data, image_data=None):
@@ -93,6 +107,51 @@ class Database:
             except Exception as e:
                 self.conn.rollback()
                 raise Exception(f"Database error: {str(e)}")
+
+    def update_market_value(self, deck_id, market_data):
+        self.ensure_connection()
+        with self.conn.cursor() as cur:
+            try:
+                cur.execute("""
+                    INSERT INTO market_values (deck_id, market_price, source, condition, notes)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (deck_id, source)
+                    DO UPDATE SET
+                        market_price = EXCLUDED.market_price,
+                        condition = EXCLUDED.condition,
+                        notes = EXCLUDED.notes,
+                        updated_at = CURRENT_TIMESTAMP
+                    RETURNING id
+                """, (
+                    deck_id,
+                    market_data['market_price'],
+                    market_data['source'],
+                    market_data['condition'],
+                    market_data.get('notes', '')
+                ))
+                self.conn.commit()
+                return cur.fetchone()[0]
+            except Exception as e:
+                self.conn.rollback()
+                raise Exception(f"Failed to update market value: {str(e)}")
+
+    def get_market_values(self, deck_id=None):
+        self.ensure_connection()
+        try:
+            query = """
+                SELECT mv.*, d.deck_name, d.manufacturer, d.condition as deck_condition, d.purchase_price
+                FROM market_values mv
+                JOIN decks d ON mv.deck_id = d.id
+            """
+            params = []
+            if deck_id:
+                query += " WHERE mv.deck_id = %s"
+                params.append(deck_id)
+            query += " ORDER BY mv.updated_at DESC"
+            
+            return pd.read_sql(query, self.conn, params=params)
+        except Exception as e:
+            raise Exception(f"Failed to fetch market values: {str(e)}")
 
     def add_to_wishlist(self, wishlist_data):
         self.ensure_connection()

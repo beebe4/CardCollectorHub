@@ -4,6 +4,7 @@ from components.view_collection import render_view_collection
 from components.statistics import render_statistics
 from components.search import render_search
 from components.wishlist import render_wishlist
+from components.market_tracker import render_market_tracker
 
 st.set_page_config(
     page_title="Playing Card Collection Manager",
@@ -18,6 +19,7 @@ def main():
     pages = {
         "View Collection": render_view_collection,
         "Add New Deck": render_add_deck,
+        "Market Tracker": render_market_tracker,
         "Wishlist": render_wishlist,
         "Statistics": render_statistics,
         "Search": render_search
