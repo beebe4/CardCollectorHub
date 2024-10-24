@@ -56,8 +56,8 @@ def render_share_collection():
                 return
             
             try:
-                # Convert deck indices to IDs
-                deck_ids = [df.iloc[idx]['id'] for idx in selected_decks]
+                # Convert deck indices to IDs, explicitly converting to Python int
+                deck_ids = [int(df.iloc[idx]['id']) for idx in selected_decks]
                 
                 # Create share
                 share_id = db.create_shared_collection(
@@ -70,7 +70,7 @@ def render_share_collection():
                 
                 # Show success and share link
                 st.success("Share created successfully!")
-                share_url = f"{st.get_option('server.baseUrlPath')}/shared/{share_id}"
+                share_url = f"{st.get_option('server.baseUrlPath')}?share={share_id}"
                 st.code(share_url, language="text")
                 
                 # Add copy button
@@ -89,14 +89,14 @@ def render_share_collection():
         
         for _, share in shares_df.iterrows():
             with st.expander(f"{share['name']} ({len(share['deck_ids'])} decks)"):
-                st.write(f"**Created:** {share['created_at'].strftime('%Y-%m-%d %H:%M')}")
-                if share['expires_at']:
-                    st.write(f"**Expires:** {share['expires_at'].strftime('%Y-%m-%d %H:%M')}")
+                st.write(f"**Created:** {share['created_at']:%Y-%m-%d %H:%M}")
+                if share['expires_at'] is not None:
+                    st.write(f"**Expires:** {share['expires_at']:%Y-%m-%d %H:%M}")
                 st.write(f"**Public:** {'Yes' if share['is_public'] else 'No'}")
                 if share['description']:
                     st.write(f"**Description:** {share['description']}")
                 
-                share_url = f"{st.get_option('server.baseUrlPath')}/shared/{share['share_id']}"
+                share_url = f"{st.get_option('server.baseUrlPath')}?share={share['share_id']}"
                 st.code(share_url, language="text")
                 
     except Exception as e:
@@ -115,9 +115,9 @@ def render_shared_collection(share_id):
         if collection['description']:
             st.write(collection['description'])
         
-        st.write(f"**Shared on:** {collection['created_at'].strftime('%Y-%m-%d %H:%M')}")
+        st.write(f"**Shared on:** {collection['created_at']:%Y-%m-%d %H:%M}")
         if collection['expires_at']:
-            st.write(f"**Expires on:** {collection['expires_at'].strftime('%Y-%m-%d %H:%M')}")
+            st.write(f"**Expires on:** {collection['expires_at']:%Y-%m-%d %H:%M}")
         
         if not collection['decks']:
             st.info("This shared collection is empty.")
